@@ -1,5 +1,5 @@
-# fobt
-Fourier transform based Optical Beam Transport
+# FOBT
+FFT-based Optical Beam Transport
 =======================================
 
 Single-frequency optical beams are represented by a complex
