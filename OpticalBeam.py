@@ -3,6 +3,7 @@
 
 import sys, time
 from math import *
+import scipy.constants
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
@@ -40,7 +41,7 @@ class SingleFrequencyBeam():
         self.A_eta = np.zeros((nx,ny),dtype=np.cdouble)
     
     @classmethod
-    def GaussianBeam(cls, f, nx, ny, dx, dy, sigx, sigy):
+    def GaussianBeamWaist(cls, f, nx, ny, dx, dy, sigx, sigy):
         """
         Create a gaussian beam with width parameters sigx/sigy
         in horizontal/vertical direction.
@@ -50,8 +51,35 @@ class SingleFrequencyBeam():
         sy2 = pow(sigy,2)
         for ix in range(nx):
             for iy in range(ny):
-                beam.A_xi[ix,iy] = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
-                beam.A_eta[ix,iy] = 0.0
+                a = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
+                beam.A_xi[ix,iy] = a
+                beam.A_eta[ix,iy] = a
+        return beam
+
+    @classmethod
+    def GaussianBeam(cls, f, nx, ny, dx, dy, zR, z):
+        """
+        Create a gaussian beam with width Rayleigh range zR
+        at a distance z from the waist (both polarization directions are equal).
+        z cannot be exactly zero.
+        """
+        beam = cls(f, nx, ny, dx, dy)
+        λ = scipy.constants.c/f
+        print("λ = %f mm" % (1e3*λ))
+        k = 2*pi/λ
+        print("k = %f m⁻¹" % k)
+        w0 = sqrt(zR*λ/pi)
+        print("w0 = %f mm" % (1e3*w0))
+        w = w0 * sqrt(1+pow(z/zR,2))
+        print("w = %f mm" % (1e3*w))
+        R = z*(1.0 + pow(zR,2)/pow(z,2))
+        zeta = atan(z/zR)
+        for ix in range(nx):
+            for iy in range(ny):
+                r2 = pow(beam.xi(ix),2) + pow(beam.eta(iy),2)
+                a = np.exp( -r2/pow(w,2) -1.0j*(k*z-zeta) -1.0j*k*r2/(2.0*R) )
+                beam.A_xi[ix,iy] = a
+                beam.A_eta[ix,iy] = a
         return beam
 
     def xi(self, ix):
@@ -108,7 +136,7 @@ class SingleFrequencyBeam():
         # first index is supposed to be x - thats why we have to transpose the matrix
         # vertical axis plots from top down - we have to flip it
         im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0, cmap='seismic',
+            aspect=1.0, cmap='seismic', vmin=-pi, vmax=pi,
             extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
         cb = plt.colorbar()
         plt.xlabel("x / m")
@@ -130,7 +158,7 @@ class SingleFrequencyBeam():
         # first index is supposed to be x - thats why we have to transpose the matrix
         # vertical axis plots from top down - we have to flip it
         im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0, cmap='seismic',
+            aspect=1.0, cmap='seismic', vmin=-pi, vmax=pi,
             extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
         cb = plt.colorbar()
         plt.xlabel("x / m")
