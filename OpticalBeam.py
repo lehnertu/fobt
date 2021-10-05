@@ -7,8 +7,21 @@ import numpy as np
 import h5py
 import matplotlib.pyplot as plt
 
-# magnetic field constant in N/A²
-mu0 = 4*np.pi*1e-7
+def ReorderBeamMatrix(A_in):
+    """
+    convert between the classical ordering of pixels on a screen
+    and the ordering used in a beam (optimized for FFT transport)
+    where the center is mapped to (0,0) and the negative positions
+    are wrapped around to the highest indizes
+    """
+    (nx, ny) = A_in.shape
+    ll = A_in[nx//2:nx, 0:ny//2]
+    lr = A_in[0:nx//2, 0:ny//2]
+    ul = A_in[nx//2:nx, ny//2:ny]
+    ur = A_in[0:nx//2, ny//2:ny]
+    l = np.concatenate((ll,lr), axis=0)
+    u = np.concatenate((ul,ur), axis=0)
+    return np.concatenate((u,l), axis=1)
 
 class SingleFrequencyBeam():
     
@@ -23,7 +36,8 @@ class SingleFrequencyBeam():
         self.ny = ny
         self.dx = dx
         self.dy = dy
-        self.A = np.zeros((nx,ny),dtype=np.cdouble)
+        self.A_xi = np.zeros((nx,ny),dtype=np.cdouble)
+        self.A_eta = np.zeros((nx,ny),dtype=np.cdouble)
     
     @classmethod
     def GaussianBeam(cls, f, nx, ny, dx, dy, sigx, sigy):
@@ -34,11 +48,10 @@ class SingleFrequencyBeam():
         beam = cls(f, nx, ny, dx, dy)
         sx2 = pow(sigx,2)
         sy2 = pow(sigy,2)
-        # beam.A = np.fromfunction(lambda ix,iy: exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2),
-        #     (nx,ny), dtype=np.cdouble)
         for ix in range(nx):
             for iy in range(ny):
-                beam.A[ix,iy] = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
+                beam.A_xi[ix,iy] = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
+                beam.A_eta[ix,iy] = 0.0
         return beam
 
     def xi(self, ix):
@@ -65,27 +78,62 @@ class SingleFrequencyBeam():
             y = self.dy*iy
         return y
 
-    def plot_Intensity(self):
-        amp = np.abs(self.A)
-        # re-order the intensity matrix for display
-        ll = amp[self.nx//2:self.nx, 0:self.ny//2]
-        lr = amp[0:self.nx//2, 0:self.ny//2]
-        ul = amp[self.nx//2:self.nx, self.ny//2:self.ny]
-        ur = amp[0:self.nx//2, self.ny//2:self.ny]
-        l = np.concatenate((ll,lr), axis=0)
-        u = np.concatenate((ul,ur), axis=0)
-        M = np.concatenate((u,l), axis=1)
-        # create plot
-        # fig = plt.figure(figsize=(6,6),dpi=150)
-        fig = plt.figure()
+    def plot(self):
+        
+        fig1 = plt.figure(1,figsize=(11,9))
         # determine the axis ranges
         xticks = np.arange(-self.nx//2, self.nx//2) * self.dx
         yticks = np.arange(-self.ny//2, self.ny//2) * self.dy
+        amp_xi = np.abs(self.A_xi)
+        phase_xi = np.angle(self.A_xi)
+        amp_eta = np.abs(self.A_eta)
+        phase_eta = np.angle(self.A_eta)
+        maxX = np.max(amp_xi)
+        maxY = np.max(amp_eta)
+        maxV = np.max([maxX,maxY])
+
+        ax1 = fig1.add_subplot(221)
+        M = ReorderBeamMatrix(amp_xi)
         # first index is supposed to be x - thats why we have to transpose the matrix
         # vertical axis plots from top down - we have to flip it
         im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0,
+            aspect=1.0, cmap='CMRmap', vmin=0.0, vmax=maxV,
             extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
+        cb = plt.colorbar()
         plt.xlabel("x / m")
         plt.ylabel("y / m")
+
+        ax2 = fig1.add_subplot(222)
+        M = ReorderBeamMatrix(phase_xi)
+        # first index is supposed to be x - thats why we have to transpose the matrix
+        # vertical axis plots from top down - we have to flip it
+        im = plt.imshow(np.flipud(M.T), interpolation='nearest',
+            aspect=1.0, cmap='seismic',
+            extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
+        cb = plt.colorbar()
+        plt.xlabel("x / m")
+        plt.ylabel("y / m")
+
+        ax3 = fig1.add_subplot(223)
+        M = ReorderBeamMatrix(amp_eta)
+        # first index is supposed to be x - thats why we have to transpose the matrix
+        # vertical axis plots from top down - we have to flip it
+        im = plt.imshow(np.flipud(M.T), interpolation='nearest',
+            aspect=1.0, cmap='CMRmap', vmin=0.0, vmax=maxV,
+            extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
+        cb = plt.colorbar()
+        plt.xlabel("x / m")
+        plt.ylabel("y / m")
+
+        ax4 = fig1.add_subplot(224)
+        M = ReorderBeamMatrix(phase_eta)
+        # first index is supposed to be x - thats why we have to transpose the matrix
+        # vertical axis plots from top down - we have to flip it
+        im = plt.imshow(np.flipud(M.T), interpolation='nearest',
+            aspect=1.0, cmap='seismic',
+            extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
+        cb = plt.colorbar()
+        plt.xlabel("x / m")
+        plt.ylabel("y / m")
+
         return plt
