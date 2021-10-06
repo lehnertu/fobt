@@ -16,6 +16,8 @@ def ReorderBeamMatrix(A_in):
     are wrapped around to the highest indizes
     """
     (nx, ny) = A_in.shape
+    # names correspond to the quadrant in the target field
+    # idexing: (left -> right, top -> down)
     ll = A_in[nx//2:nx, 0:ny//2]
     lr = A_in[0:nx//2, 0:ny//2]
     ul = A_in[nx//2:nx, ny//2:ny]
@@ -77,11 +79,115 @@ class SingleFrequencyBeam():
         for ix in range(nx):
             for iy in range(ny):
                 r2 = pow(beam.xi(ix),2) + pow(beam.eta(iy),2)
-                a = np.exp( -r2/pow(w,2) -1.0j*(k*z-zeta) -1.0j*k*r2/(2.0*R) )
+                a = np.exp( -r2/pow(w,2) - 1.0j*(k*z-zeta) - 1.0j*k*r2/(2.0*R) )
                 beam.A_xi[ix,iy] = a
                 beam.A_eta[ix,iy] = a
         return beam
 
+    @classmethod
+    def NearFieldProp(cls, source, dist):
+        """
+        Transport a source beam over a certain distance
+        using a near-field propagation method.
+        The created beam has the same geometrical properties as the source beam.
+        """
+        λ = scipy.constants.c/source.freq
+        k = 2*pi/λ
+        nx = source.nx
+        ny = source.ny
+        dkx = 2.0*pi/source.dx/nx
+        dky = 2.0*pi/source.dy/ny
+        # create the new beam
+        beam = cls(source.freq, nx, ny, source.dx, source.dy)
+        # Fourier transform into momentum space
+        FF = np.fft.fft2(source.A_xi)
+        # apply the phase factors according to the propagation length
+        FFD = np.zeros_like(FF)
+        for ix in range(nx):
+            for iy in range(ny):
+                if ix<nx//2:
+                    if iy<ny//2:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow(ix*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
+                    else:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow(ix*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
+                else:
+                    if iy<ny//2:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
+                    else:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
+        # back-transform into position space
+        FFB = np.fft.ifft2(FFD)
+        # set the output field
+        beam.A_xi = nx*nx*FFB
+        # Fourier transform into momentum space
+        FF = np.fft.fft2(source.A_eta)
+        # apply the phase factors according to the propagation length
+        FFD = np.zeros_like(FF)
+        for ix in range(nx):
+            for iy in range(ny):
+                if ix<nx//2:
+                    if iy<ny//2:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow(ix*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
+                    else:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow(ix*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
+                else:
+                    if iy<ny//2:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
+                    else:
+                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
+        # back-transform into position space
+        FFB = np.fft.ifft2(FFD)
+        # set the output field
+        beam.A_eta = nx*nx*FFB
+        return beam
+    
+    """
+    NearFieldDiffractionPropagation[beam_, dist_] := 
+      Module[{\[Lambda], k, nn, dx, dk, FF, ul, ur, ll, lr, nx, ny, FFD},
+
+       \[Lambda] = beam[[4]];
+       k = 2 \[Pi]/\[Lambda];
+       nn = beam[[2]];
+       dx = beam[[3]];
+       dk = 2 \[Pi]/dx/nn;
+
+       FF = Sqrt[nn]/(2 \[Pi])*Fourier[beam[[1]]]*dx;
+
+       ll = Table[
+         Exp[I k dist]*Exp[-I ((nx - 1)^2 + (ny - 1)^2)*dk^2*dist/2/k]*
+          FF[[nx, ny]],
+         {nx, 1, nn/2}, {ny, 1, nn/2}];
+       ul = Table[
+         Exp[I k dist]*
+          Exp[-I ((nx - nn - 1)^2 + (ny - 1)^2)*dk^2*dist/2/k]*
+          FF[[nx, ny]],
+         {nx, nn/2 + 1, nn}, {ny, 1, nn/2}];
+       lr = Table[
+         Exp[I k dist]*
+          Exp[-I ((nx - 1)^2 + (ny - nn - 1)^2)*dk^2*dist/2/k]*
+          FF[[nx, ny]],
+         {nx, 1, nn/2}, {ny, nn/2 + 1, nn}];
+       ur = Table[
+         Exp[I k dist]*
+          Exp[-I ((nx - nn - 1)^2 + (ny - nn - 1)^2)*dk^2*dist/2/k]*
+          FF[[nx, ny]],
+         {nx, nn/2 + 1, nn}, {ny, nn/2 + 1, nn}];
+
+       FFD = ArrayFlatten[{{ll, lr}, {ul, ur}}];
+
+       {Sqrt[nn]*InverseFourier[FFD]*dk, nn, dx, \[Lambda]}
+
+       ];
+    """
+    
     def xi(self, ix):
         """
         Horizontal position of the pixel center with given index ix.
