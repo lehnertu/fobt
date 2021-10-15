@@ -7,6 +7,9 @@ import scipy.constants
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn import linear_model
+
 
 def ReorderBeamMatrix(A_in):
     """
@@ -61,7 +64,7 @@ class SingleFrequencyBeam():
     @classmethod
     def GaussianBeam(cls, f, nx, ny, dx, dy, zR, z):
         """
-        Create a gaussian beam with width Rayleigh range zR
+        Create a gaussian beam with a Rayleigh range zR
         at a distance z from the waist (both polarization directions are equal).
         z cannot be exactly zero.
         """
@@ -75,6 +78,7 @@ class SingleFrequencyBeam():
         w = w0 * sqrt(1+pow(z/zR,2))
         print("w = %f mm" % (1e3*w))
         R = z*(1.0 + pow(zR,2)/pow(z,2))
+        print("R = %f m" % R)
         zeta = atan(z/zR)
         for ix in range(nx):
             for iy in range(ny):
@@ -149,45 +153,6 @@ class SingleFrequencyBeam():
         beam.A_eta = nx*nx*FFB
         return beam
     
-    """
-    NearFieldDiffractionPropagation[beam_, dist_] := 
-      Module[{\[Lambda], k, nn, dx, dk, FF, ul, ur, ll, lr, nx, ny, FFD},
-
-       \[Lambda] = beam[[4]];
-       k = 2 \[Pi]/\[Lambda];
-       nn = beam[[2]];
-       dx = beam[[3]];
-       dk = 2 \[Pi]/dx/nn;
-
-       FF = Sqrt[nn]/(2 \[Pi])*Fourier[beam[[1]]]*dx;
-
-       ll = Table[
-         Exp[I k dist]*Exp[-I ((nx - 1)^2 + (ny - 1)^2)*dk^2*dist/2/k]*
-          FF[[nx, ny]],
-         {nx, 1, nn/2}, {ny, 1, nn/2}];
-       ul = Table[
-         Exp[I k dist]*
-          Exp[-I ((nx - nn - 1)^2 + (ny - 1)^2)*dk^2*dist/2/k]*
-          FF[[nx, ny]],
-         {nx, nn/2 + 1, nn}, {ny, 1, nn/2}];
-       lr = Table[
-         Exp[I k dist]*
-          Exp[-I ((nx - 1)^2 + (ny - nn - 1)^2)*dk^2*dist/2/k]*
-          FF[[nx, ny]],
-         {nx, 1, nn/2}, {ny, nn/2 + 1, nn}];
-       ur = Table[
-         Exp[I k dist]*
-          Exp[-I ((nx - nn - 1)^2 + (ny - nn - 1)^2)*dk^2*dist/2/k]*
-          FF[[nx, ny]],
-         {nx, nn/2 + 1, nn}, {ny, nn/2 + 1, nn}];
-
-       FFD = ArrayFlatten[{{ll, lr}, {ul, ur}}];
-
-       {Sqrt[nn]*InverseFourier[FFD]*dk, nn, dx, \[Lambda]}
-
-       ];
-    """
-    
     def xi(self, ix):
         """
         Horizontal position of the pixel center with given index ix.
@@ -212,8 +177,74 @@ class SingleFrequencyBeam():
             y = self.dy*iy
         return y
 
-    def plot(self):
+    def Projection(self, polarization='xi', axis='x'):
+        """
+        Create an intensity profile along the given axis for the given polarization direction.
+        The absolute value of the intensity is summed along the other axis.
+        return position, intensity
+        """
+        if polarization=='xi': A = np.abs(ReorderBeamMatrix(self.A_xi))
+        elif polarization=='eta': A = np.abs(ReorderBeamMatrix(self.A_eta))
+        else: A = np.zeros_like(self.A_xi)
+        if axis == 'x':
+            pos = np.arange(0.0,self.nx*self.dx,self.dx) - (self.nx//2 * self.dx)
+            val = np.sum(A, axis=1)
+        elif axis == 'y':
+            pos = np.arange(0.0,self.ny*self.dy,self.dy) - (self.ny//2 * self.dy)
+            val = np.sum(A, axis=0)
+        else:
+            pos = np.arange(0.0,self.nx*self.dx,self.dx) - (self.nx//2 * self.dx)
+            val = np.zeros(A.shape[0])
+        return pos, val
+
+    def FitSizeW(self, order=4, threshold=-3):
+        """
+        Fit a gaussian profile to the beam and return its size.
+        @return wx(horizontal pol.), wy(horizontal pol.), wx(vertical pol.), wy(vertical pol.)
         
+        Fitting the logarithmic intensity can be performed to higher oder (default=4)
+        to reduce the influence of non-gaussian fractions of the beam to the evaluated second-oder coefficient.
+        All intensity below a certain threshold (default=exp(-3)=0.05) relative to the peak amplitude
+        will be ignored in te fit.
+        """
+        # to avoid zeros we add a small number (e^-20.7)
+        ampl = np.log(np.abs(ReorderBeamMatrix(self.A_xi)+1e-9).reshape(self.nx*self.ny))
+        # normalize the intensity
+        ampl = ampl - np.max(ampl)
+        # compute the weights
+        weights = np.ones_like(ampl)
+        weights[ampl<threshold]=0.0
+        # fit a polynomial
+        ix1 = np.arange(self.nx)-(self.nx//2)
+        iy1 = np.arange(self.ny)-(self.ny//2)
+        x, y = np.meshgrid(ix1, iy1)
+        X = np.array([x,y]).transpose().reshape(self.nx*self.ny,2)
+        poly = PolynomialFeatures(degree=order)
+        X_ = poly.fit_transform(X)
+        clf = linear_model.LinearRegression()
+        clf.fit(X_, ampl, sample_weight=weights)
+        wx_xi = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
+        wy_xi = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
+        ampl = np.log(np.abs(ReorderBeamMatrix(self.A_eta)+1e-9).reshape(self.nx*self.ny))
+        ampl = ampl - np.max(ampl)
+        weights = np.ones_like(ampl)
+        weights[ampl<threshold]=0.0
+        ix1 = np.arange(self.nx)-(self.nx//2)
+        iy1 = np.arange(self.ny)-(self.ny//2)
+        x, y = np.meshgrid(ix1, iy1)
+        X = np.array([x,y]).transpose().reshape(self.nx*self.ny,2)
+        poly = PolynomialFeatures(degree=order)
+        X_ = poly.fit_transform(X)
+        clf = linear_model.LinearRegression()
+        clf.fit(X_, ampl, sample_weight=weights)
+        wx_eta = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
+        wy_eta = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
+        return wx_xi, wy_xi, wx_eta, wy_eta
+
+    def plot(self):
+        """
+        Create amplitude and phase plots for both polarization directions
+        """
         fig1 = plt.figure(1,figsize=(11,9))
         # determine the axis ranges
         xticks = np.arange(-self.nx//2, self.nx//2) * self.dx
