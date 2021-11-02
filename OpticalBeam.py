@@ -130,14 +130,18 @@ class SingleComponentBeam():
         self.A = np.zeros((nx,ny),dtype=np.cdouble)
     
     @classmethod
-    def GaussianBeamWaist(cls, f, nx, ny, dx, dy, sigx, sigy):
+    def GaussianBeamWaist(cls, f, nx, ny, dx, dy, w0x, w0y):
         """
-        Create a gaussian beam with width parameters sigx/sigy
+        Create a gaussian beam with width parameters w0x/w0y
         in horizontal/vertical direction.
         """
         beam = cls(f, nx, ny, dx, dy)
-        sx2 = pow(sigx,2)
-        sy2 = pow(sigy,2)
+        λ = scipy.constants.c/f
+        print("λ = %f mm" % (1e3*λ))
+        k = 2*pi/λ
+        print("k = %f m⁻¹" % k)
+        sx2 = pow(w0x,2)
+        sy2 = pow(w0y,2)
         for ix in range(nx):
             for iy in range(ny):
                 a = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
@@ -373,6 +377,28 @@ class SingleComponentBeam():
         wx = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
         wy = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
         return wx, wy
+    
+    def RMS_SizeW(self):
+        """
+        Compute the horizontal and vertical beam size w.
+        The size is defined as 2 times the rms-radius of the power distribution.
+        """
+        x = np.array([self.xi(ix) for ix in np.arange(self.nx)])
+        p = np.sum(np.square(np.abs(self.A)), axis=1)
+        total = np.sum(p)
+        sp = np.dot(x,p)
+        xav = sp/total
+        sqs = np.dot(np.square((x-xav)),p)
+        xrms = np.sqrt(sqs/total)
+        y = np.array([self.eta(iy) for iy in np.arange(self.ny)])
+        p = np.sum(np.square(np.abs(self.A)), axis=0)
+        total = np.sum(p)
+        sp = np.dot(y,p)
+        yav = sp/total
+        sqs = np.dot(np.square((y-yav)),p)
+        yrms = np.sqrt(sqs/total)
+        return (2.0*xrms, 2.0*yrms)
+        
 
     def plot(self):
         """
