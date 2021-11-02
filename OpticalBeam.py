@@ -29,7 +29,92 @@ def ReorderBeamMatrix(A_in):
     u = np.concatenate((ul,ur), axis=0)
     return np.concatenate((u,l), axis=1)
 
-class SingleFrequencyBeam():
+def ImportTeufelSingleFrequency(filename, freq):
+    """
+    Create SingleComponentBeam() objects importing fields on a rectangular screen
+    from a TEUFEL calculation. A list of two beams [beam_S, beam_P] is returned
+    containing the two polarization directions.
+    """
+    hdf = h5py.File(filename, "r")
+    # Get the groups
+    pos = hdf['ObservationPosition']
+    Nx = pos.attrs.get('Nx')
+    Ny = pos.attrs.get('Ny')
+    print("Nx=%d Ny=%d" % (Nx,Ny))
+    field = hdf['ElMagField']
+    t0 = field.attrs.get('t0')
+    dt = field.attrs.get('dt')
+    nots = field.attrs.get('NOTS')
+    print("t0=%g dt=%g NOTS=%d" % (t0, dt, nots))
+    pos = np.array(pos)
+    A = np.array(field)
+    hdf.close()
+    # delta_x and delta_y are vectors
+    delta_x = (pos[Nx-1,Ny//2] - pos[0,Ny//2]) / (Nx-1)
+    delta_y = (pos[Nx//2,Ny-1] - pos[Nx//2,0]) / (Ny-1)
+    # the pixel spacing
+    dx = sqrt(np.sum(np.square(delta_x)))
+    dy = sqrt(np.sum(np.square(delta_y)))
+    # unit vectors
+    e_x = delta_x / dx
+    e_y = delta_y / dy
+    # index in the fourier spectrum
+    f_index = int(round(freq*dt*nots))
+    
+    beam_S = SingleComponentBeam(freq, Nx, Ny, dx, dy)
+    M = np.zeros((Nx,Ny),dtype=np.cdouble)
+    for ix in range(Nx):
+        for iy in range(Ny):
+            trace = A[ix][iy]
+            data = trace.transpose()
+            Ex = data[0]
+            Ey = data[1]
+            Ez = data[2]
+            EVec = np.array([Ex, Ey, Ez]).transpose()
+            E = np.dot(EVec,e_x)
+            spect = np.fft.fft(E)
+            M[ix,iy] = spect[f_index]
+    beam_S.A = ReorderBeamMatrix(M)
+
+    beam_P = SingleComponentBeam(freq, Nx, Ny, dx, dy)
+    M = np.zeros((Nx,Ny),dtype=np.cdouble)
+    for ix in range(Nx):
+        for iy in range(Ny):
+            trace = A[ix][iy]
+            data = trace.transpose()
+            Ex = data[0]
+            Ey = data[1]
+            Ez = data[2]
+            EVec = np.array([Ex, Ey, Ez]).transpose()
+            E = np.dot(EVec,e_y)
+            spect = np.fft.fft(E)
+            M[ix,iy] = spect[f_index]
+    beam_P.A = ReorderBeamMatrix(M)
+
+    return [beam_S, beam_P]
+    
+class SingleComponentBeam():
+    """
+    This class describes an optical beam sampled at on observation plane
+    perpendicular to the direction of propagation. Only one frequency
+    component is described, for polychromatic beams several objects of
+    this class need to be combined.
+
+    The optical beam is given by an array of complex amplitudes on a rectangular grid.
+    The amplitude refers to the elektric field strength. The power density is the
+    square of the absolute value of the amplitude.
+    The dimensions of that grid are given when creating the beam object.
+    Both values should be integer powers of 2 in order to allow fast Fourier transforms.
+
+    The amplitudes are stored in a 2-dim complex-valued NumPy array.
+    To ease the Fourier transforms the array are stored in an unconventional order.
+    The index=0 elements always refer to the center of the beam (propagation axis).
+    The indices 1...N/2-1 refer to positive displacements off-axis.
+    The indices N/2...N-1 contain negative displacement values with N-1 being
+    the pixel closest to the axis (-1*dx).
+    Essentially, the high-intensity central part of the beam is stored in the
+    corners of the matrix.
+    """
     
     def __init__(self, f, nx, ny, dx, dy):
         """
@@ -42,8 +127,7 @@ class SingleFrequencyBeam():
         self.ny = ny
         self.dx = dx
         self.dy = dy
-        self.A_xi = np.zeros((nx,ny),dtype=np.cdouble)
-        self.A_eta = np.zeros((nx,ny),dtype=np.cdouble)
+        self.A = np.zeros((nx,ny),dtype=np.cdouble)
     
     @classmethod
     def GaussianBeamWaist(cls, f, nx, ny, dx, dy, sigx, sigy):
@@ -57,8 +141,8 @@ class SingleFrequencyBeam():
         for ix in range(nx):
             for iy in range(ny):
                 a = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
-                beam.A_xi[ix,iy] = a
-                beam.A_eta[ix,iy] = a
+                beam.A[ix,iy] = a
+        beam.Normalize()
         return beam
 
     @classmethod
@@ -84,16 +168,25 @@ class SingleFrequencyBeam():
             for iy in range(ny):
                 r2 = pow(beam.xi(ix),2) + pow(beam.eta(iy),2)
                 a = np.exp( -r2/pow(w,2) - 1.0j*(k*z-zeta) - 1.0j*k*r2/(2.0*R) )
-                beam.A_xi[ix,iy] = a
-                beam.A_eta[ix,iy] = a
+                beam.A[ix,iy] = a
+        beam.Normalize()
         return beam
 
     @classmethod
     def NearFieldProp(cls, source, dist):
         """
-        Transport a source beam over a certain distance
-        using a near-field propagation method.
+        Transport a source beam over a certain distance using the near-field angular propagation method.
         The created beam has the same geometrical properties as the source beam.
+
+        Diffraction propagation is computed based on the propagation of plane waves.
+        A Fourier transform is used to decompose the complex amplitude distribution
+        into a set of plane waves with different propagation direction (transverse
+        wave number). That's why this method is also called angular spectrum propagation.
+        The phase factors for arrival of these plane waves are easily computed
+        from the direktion of propagation. After applying these phase factors
+        the set is retransformed into aplitude distribution after the propagation step.
+
+        Return: propagated SingleComponentBeam object
         """
         λ = scipy.constants.c/source.freq
         k = 2*pi/λ
@@ -104,7 +197,7 @@ class SingleFrequencyBeam():
         # create the new beam
         beam = cls(source.freq, nx, ny, source.dx, source.dy)
         # Fourier transform into momentum space
-        FF = np.fft.fft2(source.A_xi)
+        FF = np.fft.fft2(source.A)
         # apply the phase factors according to the propagation length
         FFD = np.zeros_like(FF)
         for ix in range(nx):
@@ -124,35 +217,78 @@ class SingleFrequencyBeam():
                         FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
                             np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
         # back-transform into position space
-        FFB = np.fft.ifft2(FFD)
-        # set the output field
-        beam.A_xi = nx*nx*FFB
-        # Fourier transform into momentum space
-        FF = np.fft.fft2(source.A_eta)
-        # apply the phase factors according to the propagation length
-        FFD = np.zeros_like(FF)
-        for ix in range(nx):
-            for iy in range(ny):
-                if ix<nx//2:
-                    if iy<ny//2:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow(ix*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
-                    else:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow(ix*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
-                else:
-                    if iy<ny//2:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
-                    else:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
-        # back-transform into position space
-        FFB = np.fft.ifft2(FFD)
-        # set the output field
-        beam.A_eta = nx*nx*FFB
+        beam.A = np.fft.ifft2(FFD)
         return beam
     
+    @classmethod
+    def FarFieldProp(cls, source, dist):
+        """
+        Transport a source beam over a certain distance using the far-field propagation method.
+
+        Diffraction propagation is computed based on the propagation of plane waves.
+        A Fourier transform is used to compute the convolution of the input distribution
+        with a diffraction kernel.
+
+        Return: propagated SingleComponentBeam object
+        """
+        λ = scipy.constants.c/source.freq
+        k = 2*pi/λ
+        nx = source.nx
+        ny = source.ny
+        dx = source.dx
+        dy = source.dy
+        dx2 = 2.0*pi*dist/(k*nx*dx)
+        dy2 = 2.0*pi*dist/(k*ny*dy)
+        # create the new beam
+        beam = cls(source.freq, nx, ny, dx2, dy2)
+        # apply the internal phase factor according to the propagation length
+        FA = np.zeros_like(source.A)
+        for ix in range(nx):
+            for iy in range(ny):
+                if ix<nx//2:
+                    if iy<ny//2:
+                        FA[ix,iy] = source.A[ix,iy] * \
+                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx,2)+pow(iy*dy,2)) )
+                    else:
+                        FA[ix,iy] = source.A[ix,iy] * \
+                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx,2)+pow((iy-ny)*dy,2)) )
+                else:
+                    if iy<ny//2:
+                        FA[ix,iy] = source.A[ix,iy] * \
+                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx,2)+pow(iy*dy,2)) )
+                    else:
+                        FA[ix,iy] = source.A[ix,iy] * \
+                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx,2)+pow((iy-ny)*dy,2)) )
+        # Fourier transform
+        FFA = np.fft.fft2(FA)
+        # apply the external phase factor according to the propagation length
+        for ix in range(nx):
+            for iy in range(ny):
+                if ix<nx//2:
+                    if iy<ny//2:
+                        beam.A[ix,iy] = FFA[ix,iy] * \
+                            -2.0*pi*k/1.0j/dist * \
+                            np.exp(-1.0j*k*dist) * \
+                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx2,2)+pow(iy*dy2,2)) )
+                    else:
+                        beam.A[ix,iy] = FFA[ix,iy] * \
+                            -2.0*pi*k/1.0j/dist * \
+                            np.exp(-1.0j*k*dist) * \
+                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx2,2)+pow((iy-ny)*dy2,2)) )
+                else:
+                    if iy<ny//2:
+                        beam.A[ix,iy] = FFA[ix,iy] * \
+                            -2.0*pi*k/1.0j/dist * \
+                            np.exp(-1.0j*k*dist) * \
+                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx2,2)+pow(iy*dy2,2)) )
+                    else:
+                        beam.A[ix,iy] = FFA[ix,iy] * \
+                            -2.0*pi*k/1.0j/dist * \
+                            np.exp(-1.0j*k*dist) * \
+                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx2,2)+pow((iy-ny)*dy2,2)) )
+        beam.A *= dx*dy / (4*pi*pi)
+        return beam
+
     def xi(self, ix):
         """
         Horizontal position of the pixel center with given index ix.
@@ -177,15 +313,26 @@ class SingleFrequencyBeam():
             y = self.dy*iy
         return y
 
-    def Projection(self, polarization='xi', axis='x'):
+    def TotalPower(self):
+        """
+        Sum up all the intensity in the beam.
+        The power density is the square of the absolute amplitude.
+        """
+        return np.sum(np.square(np.abs(self.A)))*self.dx*self.dy
+
+    def Normalize(self):
+        """
+        Normalize total power to 1.0.
+        """
+        self.A /= np.sqrt(self.TotalPower())
+
+    def Projection(self, axis='x'):
         """
         Create an intensity profile along the given axis for the given polarization direction.
         The absolute value of the intensity is summed along the other axis.
         return position, intensity
         """
-        if polarization=='xi': A = np.abs(ReorderBeamMatrix(self.A_xi))
-        elif polarization=='eta': A = np.abs(ReorderBeamMatrix(self.A_eta))
-        else: A = np.zeros_like(self.A_xi)
+        A = np.abs(ReorderBeamMatrix(self.A))
         if axis == 'x':
             pos = np.arange(0.0,self.nx*self.dx,self.dx) - (self.nx//2 * self.dx)
             val = np.sum(A, axis=1)
@@ -208,7 +355,7 @@ class SingleFrequencyBeam():
         will be ignored in te fit.
         """
         # to avoid zeros we add a small number (e^-20.7)
-        ampl = np.log(np.abs(ReorderBeamMatrix(self.A_xi)+1e-9).reshape(self.nx*self.ny))
+        ampl = np.log(np.abs(ReorderBeamMatrix(self.A)+1e-9).reshape(self.nx*self.ny))
         # normalize the intensity
         ampl = ampl - np.max(ampl)
         # compute the weights
@@ -223,75 +370,35 @@ class SingleFrequencyBeam():
         X_ = poly.fit_transform(X)
         clf = linear_model.LinearRegression()
         clf.fit(X_, ampl, sample_weight=weights)
-        wx_xi = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
-        wy_xi = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
-        ampl = np.log(np.abs(ReorderBeamMatrix(self.A_eta)+1e-9).reshape(self.nx*self.ny))
-        ampl = ampl - np.max(ampl)
-        weights = np.ones_like(ampl)
-        weights[ampl<threshold]=0.0
-        ix1 = np.arange(self.nx)-(self.nx//2)
-        iy1 = np.arange(self.ny)-(self.ny//2)
-        x, y = np.meshgrid(ix1, iy1)
-        X = np.array([x,y]).transpose().reshape(self.nx*self.ny,2)
-        poly = PolynomialFeatures(degree=order)
-        X_ = poly.fit_transform(X)
-        clf = linear_model.LinearRegression()
-        clf.fit(X_, ampl, sample_weight=weights)
-        wx_eta = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
-        wy_eta = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
-        return wx_xi, wy_xi, wx_eta, wy_eta
+        wx = 1.0/sqrt(-clf.coef_[3]) * self.dx if clf.coef_[3]<=0 else 0.0
+        wy = 1.0/sqrt(-clf.coef_[5]) * self.dy if clf.coef_[5]<=0 else 0.0
+        return wx, wy
 
     def plot(self):
         """
         Create amplitude and phase plots for both polarization directions
         """
-        fig1 = plt.figure(1,figsize=(11,9))
+        fig1 = plt.figure(1,figsize=(11,5))
         # determine the axis ranges
         xticks = np.arange(-self.nx//2, self.nx//2) * self.dx
         yticks = np.arange(-self.ny//2, self.ny//2) * self.dy
-        amp_xi = np.abs(self.A_xi)
-        phase_xi = np.angle(self.A_xi)
-        amp_eta = np.abs(self.A_eta)
-        phase_eta = np.angle(self.A_eta)
-        maxX = np.max(amp_xi)
-        maxY = np.max(amp_eta)
-        maxV = np.max([maxX,maxY])
+        amp = np.abs(self.A)
+        phase = np.angle(self.A)
+        maxA = np.max(amp)
 
-        ax1 = fig1.add_subplot(221)
-        M = ReorderBeamMatrix(amp_xi)
+        ax1 = fig1.add_subplot(121)
+        M = ReorderBeamMatrix(amp)
         # first index is supposed to be x - thats why we have to transpose the matrix
         # vertical axis plots from top down - we have to flip it
         im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0, cmap='CMRmap', vmin=0.0, vmax=maxV,
+            aspect=1.0, cmap='CMRmap', vmin=0.0, vmax=maxA,
             extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
         cb = plt.colorbar()
         plt.xlabel("x / m")
         plt.ylabel("y / m")
 
-        ax2 = fig1.add_subplot(222)
-        M = ReorderBeamMatrix(phase_xi)
-        # first index is supposed to be x - thats why we have to transpose the matrix
-        # vertical axis plots from top down - we have to flip it
-        im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0, cmap='seismic', vmin=-pi, vmax=pi,
-            extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
-        cb = plt.colorbar()
-        plt.xlabel("x / m")
-        plt.ylabel("y / m")
-
-        ax3 = fig1.add_subplot(223)
-        M = ReorderBeamMatrix(amp_eta)
-        # first index is supposed to be x - thats why we have to transpose the matrix
-        # vertical axis plots from top down - we have to flip it
-        im = plt.imshow(np.flipud(M.T), interpolation='nearest',
-            aspect=1.0, cmap='CMRmap', vmin=0.0, vmax=maxV,
-            extent=[xticks[0], xticks[-1], yticks[0], yticks[-1]])
-        cb = plt.colorbar()
-        plt.xlabel("x / m")
-        plt.ylabel("y / m")
-
-        ax4 = fig1.add_subplot(224)
-        M = ReorderBeamMatrix(phase_eta)
+        ax2 = fig1.add_subplot(122)
+        M = ReorderBeamMatrix(phase)
         # first index is supposed to be x - thats why we have to transpose the matrix
         # vertical axis plots from top down - we have to flip it
         im = plt.imshow(np.flipud(M.T), interpolation='nearest',
