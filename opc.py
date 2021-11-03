@@ -144,7 +144,7 @@ class SingleComponentBeam():
         sy2 = pow(w0y,2)
         for ix in range(nx):
             for iy in range(ny):
-                a = exp(-pow(beam.xi(ix),2)/sx2 - pow(beam.eta(iy),2)/sy2)
+                a = exp(-pow(beam.x(ix),2)/sx2 - pow(beam.y(iy),2)/sy2)
                 beam.A[ix,iy] = a
         beam.Normalize()
         return beam
@@ -170,7 +170,7 @@ class SingleComponentBeam():
         zeta = atan(z/zR)
         for ix in range(nx):
             for iy in range(ny):
-                r2 = pow(beam.xi(ix),2) + pow(beam.eta(iy),2)
+                r2 = pow(beam.x(ix),2) + pow(beam.y(iy),2)
                 a = np.exp( -r2/pow(w,2) - 1.0j*(k*z-zeta) - 1.0j*k*r2/(2.0*R) )
                 beam.A[ix,iy] = a
         beam.Normalize()
@@ -206,20 +206,8 @@ class SingleComponentBeam():
         FFD = np.zeros_like(FF)
         for ix in range(nx):
             for iy in range(ny):
-                if ix<nx//2:
-                    if iy<ny//2:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow(ix*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
-                    else:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow(ix*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
-                else:
-                    if iy<ny//2:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow(iy*dky,2))*dist/(2.0*k)) )
-                    else:
-                        FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
-                            np.exp(1.0j*(pow((ix-nx)*dkx,2)+pow((iy-ny)*dky,2))*dist/(2.0*k)) )
+                FFD[ix,iy] = FF[ix,iy] * ( np.exp(-1.0j*k*dist) *
+                    np.exp(1.0j*(pow(beam.xi(ix),2)+pow(beam.eta(iy),2))*dist/(2.0*k)) )
         # back-transform into position space
         beam.A = np.fft.ifft2(FFD)
         return beam
@@ -239,61 +227,29 @@ class SingleComponentBeam():
         k = 2*pi/λ
         nx = source.nx
         ny = source.ny
-        dx = source.dx
-        dy = source.dy
-        dx2 = 2.0*pi*dist/(k*nx*dx)
-        dy2 = 2.0*pi*dist/(k*ny*dy)
         # create the new beam
+        dx2 = 2.0*pi*dist/(k*nx*source.dx)
+        dy2 = 2.0*pi*dist/(k*ny*source.dy)
         beam = cls(source.freq, nx, ny, dx2, dy2)
         # apply the internal phase factor according to the propagation length
         FA = np.zeros_like(source.A)
         for ix in range(nx):
             for iy in range(ny):
-                if ix<nx//2:
-                    if iy<ny//2:
-                        FA[ix,iy] = source.A[ix,iy] * \
-                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx,2)+pow(iy*dy,2)) )
-                    else:
-                        FA[ix,iy] = source.A[ix,iy] * \
-                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx,2)+pow((iy-ny)*dy,2)) )
-                else:
-                    if iy<ny//2:
-                        FA[ix,iy] = source.A[ix,iy] * \
-                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx,2)+pow(iy*dy,2)) )
-                    else:
-                        FA[ix,iy] = source.A[ix,iy] * \
-                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx,2)+pow((iy-ny)*dy,2)) )
+                FA[ix,iy] = source.A[ix,iy] * \
+                    np.exp(-1.0j*k/2.0/dist*(pow(source.x(ix),2)+pow(source.y(iy),2)) )
         # Fourier transform
         FFA = np.fft.fft2(FA)
         # apply the external phase factor according to the propagation length
         for ix in range(nx):
             for iy in range(ny):
-                if ix<nx//2:
-                    if iy<ny//2:
-                        beam.A[ix,iy] = FFA[ix,iy] * \
-                            -2.0*pi*k/1.0j/dist * \
-                            np.exp(-1.0j*k*dist) * \
-                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx2,2)+pow(iy*dy2,2)) )
-                    else:
-                        beam.A[ix,iy] = FFA[ix,iy] * \
-                            -2.0*pi*k/1.0j/dist * \
-                            np.exp(-1.0j*k*dist) * \
-                            np.exp(-1.0j*k/2.0/dist*(pow(ix*dx2,2)+pow((iy-ny)*dy2,2)) )
-                else:
-                    if iy<ny//2:
-                        beam.A[ix,iy] = FFA[ix,iy] * \
-                            -2.0*pi*k/1.0j/dist * \
-                            np.exp(-1.0j*k*dist) * \
-                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx2,2)+pow(iy*dy2,2)) )
-                    else:
-                        beam.A[ix,iy] = FFA[ix,iy] * \
-                            -2.0*pi*k/1.0j/dist * \
-                            np.exp(-1.0j*k*dist) * \
-                            np.exp(-1.0j*k/2.0/dist*(pow((ix-nx)*dx2,2)+pow((iy-ny)*dy2,2)) )
-        beam.A *= dx*dy / (4*pi*pi)
+                beam.A[ix,iy] = FFA[ix,iy] * \
+                    -2.0*pi*k/1.0j/dist * \
+                    np.exp(-1.0j*k*dist) * \
+                    np.exp(-1.0j*k/2.0/dist*(pow(beam.x(ix),2)+pow(beam.y(iy),2)) )
+        beam.A *= source.dx*source.dy / (4*pi*pi)
         return beam
 
-    def xi(self, ix):
+    def x(self, ix):
         """
         Horizontal position of the pixel center with given index ix.
         Indeces up to nx/2-1 map to positive x positions in increasing order starting at zero.
@@ -305,7 +261,7 @@ class SingleComponentBeam():
             x = self.dx*ix
         return x
     
-    def eta(self, iy):
+    def y(self, iy):
         """
         Verticalal position of the pixel center with given index iy.
         Indeces up to ny/2-1 map to positive y positions in increasing order starting at zero.
@@ -317,6 +273,28 @@ class SingleComponentBeam():
             y = self.dy*iy
         return y
 
+    def xi(self, ix):
+        """
+        Angular coordinate of the Fourier-space pixel with given index ix.
+        """
+        dkx = 2.0*pi/self.dx/self.nx
+        if ix > self.nx//2 :
+            xi = dkx*(ix-self.nx)
+        else :
+            xi = dkx*ix
+        return xi
+    
+    def eta(self, iy):
+        """
+        Angular coordinate of the Fourier-space pixel with given index iy.
+        """
+        dky = 2.0*pi/self.dy/self.ny
+        if iy > self.ny//2 :
+            eta = dky*(iy-self.ny)
+        else :
+            eta = dky*iy
+        return eta
+    
     def TotalPower(self):
         """
         Sum up all the intensity in the beam.
@@ -383,14 +361,14 @@ class SingleComponentBeam():
         Compute the horizontal and vertical beam size w.
         The size is defined as 2 times the rms-radius of the power distribution.
         """
-        x = np.array([self.xi(ix) for ix in np.arange(self.nx)])
+        x = np.array([self.x(ix) for ix in np.arange(self.nx)])
         p = np.sum(np.square(np.abs(self.A)), axis=1)
         total = np.sum(p)
         sp = np.dot(x,p)
         xav = sp/total
         sqs = np.dot(np.square((x-xav)),p)
         xrms = np.sqrt(sqs/total)
-        y = np.array([self.eta(iy) for iy in np.arange(self.ny)])
+        y = np.array([self.y(iy) for iy in np.arange(self.ny)])
         p = np.sum(np.square(np.abs(self.A)), axis=0)
         total = np.sum(p)
         sp = np.dot(y,p)
