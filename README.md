@@ -1,5 +1,5 @@
-# FOBT
-FFT-based Optical Beam Transport
+# pyOPC
+FFT-based Optical Propagation Code
 =======================================
 
 Single-frequency optical beams are represented by a complex
