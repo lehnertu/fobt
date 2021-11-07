@@ -249,6 +249,12 @@ class SingleComponentBeam():
         beam.A *= source.dx*source.dy / (4*pi*pi)
         return beam
 
+    def shape(self):
+        """
+        Report the shape of the beam matrix.
+        """
+        return self.A.shape
+        
     def x(self, ix):
         """
         Horizontal position of the pixel center with given index ix.
@@ -295,6 +301,31 @@ class SingleComponentBeam():
             eta = dky*iy
         return eta
     
+    def pad(self, Nx_target, Ny_target):
+        """
+        Pad the field with zero-intensity pixels to reach the given shape of the matrix.
+        """
+        if Nx_target > self.nx:
+            # cut into two horizontal parts
+            M1 = self.A[0:self.nx//2, :]
+            M2 = self.A[self.nx//2:self.nx, :]
+            # and insert zeros up to the intended shape
+            M0 = np.zeros((Nx_target-self.nx,self.ny))
+            A = np.concatenate((M1,M0,M2),axis=0)
+            self.nx = Nx_target
+        else:
+            A = self.A
+        if Ny_target > self.ny:
+            # cut into two vertical parts
+            M1 = A[:, 0:self.ny//2]
+            M2 = A[:, self.ny//2:self.ny]
+            # and insert zeros up to the intended shape
+            M0 = np.zeros((self.nx,Ny_target-self.ny))
+            self.A = np.concatenate((M1,M0,M2),axis=1)
+            self.ny = Ny_target
+        else:
+            self.A = A
+        
     def TotalPower(self):
         """
         Sum up all the intensity in the beam.
@@ -380,7 +411,7 @@ class SingleComponentBeam():
 
     def plot(self):
         """
-        Create amplitude and phase plots for both polarization directions
+        Create amplitude and phase plots
         """
         fig1 = plt.figure(1,figsize=(11,5))
         # determine the axis ranges
