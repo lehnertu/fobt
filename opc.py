@@ -176,10 +176,9 @@ class SingleComponentBeam():
         beam.Normalize()
         return beam
 
-    @classmethod
-    def NearFieldProp(cls, source, dist):
+    def NearFieldProp(self, dist):
         """
-        Transport a source beam over a certain distance using the near-field angular propagation method.
+        Transport this beam over a certain distance using the near-field angular propagation method.
         The created beam has the same geometrical properties as the source beam.
 
         Diffraction propagation is computed based on the propagation of plane waves.
@@ -192,16 +191,15 @@ class SingleComponentBeam():
 
         Return: propagated SingleComponentBeam object
         """
-        λ = scipy.constants.c/source.freq
-        k = 2*pi/λ
-        nx = source.nx
-        ny = source.ny
-        dkx = 2.0*pi/source.dx/nx
-        dky = 2.0*pi/source.dy/ny
+        k = 2*pi*self.freq/scipy.constants.c
+        nx = self.nx
+        ny = self.ny
+        dkx = 2.0*pi/self.dx/nx
+        dky = 2.0*pi/self.dy/ny
         # create the new beam
-        beam = cls(source.freq, nx, ny, source.dx, source.dy)
+        beam = SingleComponentBeam(self.freq, nx, ny, self.dx, self.dy)
         # Fourier transform into momentum space
-        FF = np.fft.fft2(source.A)
+        FF = np.fft.fft2(self.A)
         # apply the phase factors according to the propagation length
         FFD = np.zeros_like(FF)
         for ix in range(nx):
@@ -212,10 +210,9 @@ class SingleComponentBeam():
         beam.A = np.fft.ifft2(FFD)
         return beam
     
-    @classmethod
-    def FarFieldProp(cls, source, dist):
+    def FarFieldProp(self, dist):
         """
-        Transport a source beam over a certain distance using the far-field propagation method.
+        Transport this beam over a certain distance using the far-field propagation method.
 
         Diffraction propagation is computed based on the propagation of plane waves.
         A Fourier transform is used to compute the convolution of the input distribution
@@ -223,20 +220,19 @@ class SingleComponentBeam():
 
         Return: propagated SingleComponentBeam object
         """
-        λ = scipy.constants.c/source.freq
-        k = 2*pi/λ
-        nx = source.nx
-        ny = source.ny
+        k = 2*pi*self.freq/scipy.constants.c
+        nx = self.nx
+        ny = self.ny
         # create the new beam
-        dx2 = 2.0*pi*dist/(k*nx*source.dx)
-        dy2 = 2.0*pi*dist/(k*ny*source.dy)
-        beam = cls(source.freq, nx, ny, dx2, dy2)
+        dx2 = 2.0*pi*dist/(k*nx*self.dx)
+        dy2 = 2.0*pi*dist/(k*ny*self.dy)
+        beam = SingleComponentBeam(self.freq, nx, ny, dx2, dy2)
         # apply the internal phase factor according to the propagation length
-        FA = np.zeros_like(source.A)
+        FA = np.zeros_like(self.A)
         for ix in range(nx):
             for iy in range(ny):
-                FA[ix,iy] = source.A[ix,iy] * \
-                    np.exp(-1.0j*k/2.0/dist*(pow(source.x(ix),2)+pow(source.y(iy),2)) )
+                FA[ix,iy] = self.A[ix,iy] * \
+                    np.exp(-1.0j*k/2.0/dist*(pow(self.x(ix),2)+pow(self.y(iy),2)) )
         # Fourier transform
         FFA = np.fft.fft2(FA)
         # apply the external phase factor according to the propagation length
@@ -246,7 +242,7 @@ class SingleComponentBeam():
                     -2.0*pi*k/1.0j/dist * \
                     np.exp(-1.0j*k*dist) * \
                     np.exp(-1.0j*k/2.0/dist*(pow(beam.x(ix),2)+pow(beam.y(iy),2)) )
-        beam.A *= source.dx*source.dy / (4*pi*pi)
+        beam.A *= self.dx*self.dy / (4*pi*pi)
         return beam
 
     def shape(self):
