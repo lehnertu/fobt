@@ -92,7 +92,31 @@ def ImportTeufelSingleFrequency(filename, freq):
     beam_P.A = ReorderBeamMatrix(M)
 
     return [beam_S, beam_P]
-    
+
+def HuygensFresnel(source, target, dist):
+    """
+    Direct computation of the Huygens-Fresnel integral serves as a reference
+    for all propagation methods. The routine expects a source beam and
+    a separate target beam which defines the geometry of the output.
+    The intensity/phase distribution of the target field is computed and overwritten.
+    The performance of the algorithm is not suited for larger fields.
+    """
+    # check for correct type of the input
+    λ = scipy.constants.c/source.freq
+    k = 2*pi/λ
+    # compute integral
+    for tx in range(target.nx):
+        for ty in range(target.ny):
+            target.A[tx,ty] = 0.0
+            for sx in range(source.nx):
+                for sy in range(source.ny):
+                    x_squared = pow(target.x(tx)-source.x(sx),2)
+                    y_squared = pow(target.y(ty)-source.y(sy),2)
+                    target.A[tx,ty] += source.A[sx,sy] * -1.0j/λ/dist * \
+                        np.exp(1.0j*k/(2.0*dist)*(x_squared+y_squared))
+    target.freq = source.freq
+    target.A *= source.dx*source.dy
+               
 class SingleComponentBeam():
     """
     This class describes an optical beam sampled at on observation plane
@@ -153,8 +177,7 @@ class SingleComponentBeam():
     def GaussianBeam(cls, f, nx, ny, dx, dy, zR, z):
         """
         Create a gaussian beam with a Rayleigh range zR
-        at a distance z from the waist (both polarization directions are equal).
-        z cannot be exactly zero.
+        at a distance z from the waist. z cannot be exactly zero.
         """
         beam = cls(f, nx, ny, dx, dy)
         λ = scipy.constants.c/f
@@ -224,8 +247,12 @@ class SingleComponentBeam():
         nx = self.nx
         ny = self.ny
         # create the new beam
-        dx2 = 2.0*pi*dist/(k*nx*self.dx)
-        dy2 = 2.0*pi*dist/(k*ny*self.dy)
+        dx2 = fabs(2.0*pi*dist/(k*nx*self.dx))
+        dy2 = fabs(2.0*pi*dist/(k*ny*self.dy))
+        if (dx2<self.dx) or (dy2<self.dy):
+            print("Warning: not in far field, reducing field size")
+            print("dx : %.1g => %.1g" % (self.dx,dx2))
+            print("dy : %.1g => %.1g" % (self.dy,dy2))
         beam = SingleComponentBeam(self.freq, nx, ny, dx2, dy2)
         # apply the internal phase factor according to the propagation length
         FA = np.zeros_like(self.A)
@@ -234,7 +261,10 @@ class SingleComponentBeam():
                 FA[ix,iy] = self.A[ix,iy] * \
                     np.exp(-1.0j*k/2.0/dist*(pow(self.x(ix),2)+pow(self.y(iy),2)) )
         # Fourier transform
-        FFA = np.fft.fft2(FA)
+        if dist>0:
+            FFA = np.fft.ifft2(FA) * nx*ny
+        else:
+            FFA = np.fft.fft2(FA)
         # apply the external phase factor according to the propagation length
         for ix in range(nx):
             for iy in range(ny):
@@ -307,20 +337,43 @@ class SingleComponentBeam():
             M2 = self.A[self.nx//2:self.nx, :]
             # and insert zeros up to the intended shape
             M0 = np.zeros((Nx_target-self.nx,self.ny))
-            A = np.concatenate((M1,M0,M2),axis=0)
+            M = np.concatenate((M1,M0,M2),axis=0)
             self.nx = Nx_target
         else:
-            A = self.A
+            M = self.A
         if Ny_target > self.ny:
             # cut into two vertical parts
-            M1 = A[:, 0:self.ny//2]
-            M2 = A[:, self.ny//2:self.ny]
+            M1 = M[:, 0:self.ny//2]
+            M2 = M[:, self.ny//2:self.ny]
             # and insert zeros up to the intended shape
             M0 = np.zeros((self.nx,Ny_target-self.ny))
             self.A = np.concatenate((M1,M0,M2),axis=1)
             self.ny = Ny_target
         else:
-            self.A = A
+            self.A = M
+        
+    def crop(self, Nx_target, Ny_target):
+        """
+        Cut the outer parts of the field to reach the given shape of the matrix.
+        """
+        if Nx_target < self.nx:
+            # cut into two horizontal parts
+            M1 = self.A[0:(Nx_target+1)//2, :]
+            M2 = self.A[self.nx-Nx_target//2:self.nx, :]
+            # re-assemble
+            M = np.concatenate((M1,M2),axis=0)
+            self.nx = Nx_target
+        else:
+            M = self.A
+        if Ny_target < self.ny:
+            # cut into two horizontal parts
+            M1 = M[:, 0:(Ny_target+1)//2]
+            M2 = M[:, self.ny-Ny_target//2:self.ny]
+            # re-assemble
+            self.A = np.concatenate((M1,M2),axis=1)
+            self.ny = Ny_target
+        else:
+            self.A = M
         
     def TotalPower(self):
         """
