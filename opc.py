@@ -374,6 +374,64 @@ class SingleComponentBeam():
             self.ny = Ny_target
         else:
             self.A = M
+
+    def CircularAperture(self, R, x0=0.0, y0=0.0, Nsampl=4):
+        """
+        The radiation field is zeroed outside a circle with radius R about a point (x0,y0).
+        For all pixels which are not fully inside or outside the circle
+        oversampling is used to determine a fractional ratio of attenuation.
+        """
+        for ix in range(self.nx):
+            for iy in range(self.ny):
+                # check the 4 corner points of the pixel
+                t1 = pow(self.x(ix-0.5)-x0,2)+pow(self.y(iy-0.5)-y0,2)<pow(R,2)
+                t2 = pow(self.x(ix-0.5)-x0,2)+pow(self.y(iy+0.5)-y0,2)<pow(R,2)
+                t3 = pow(self.x(ix+0.5)-x0,2)+pow(self.y(iy-0.5)-y0,2)<pow(R,2)
+                t4 = pow(self.x(ix+0.5)-x0,2)+pow(self.y(iy+0.5)-y0,2)<pow(R,2)
+                # if all are in the circle -> unchanged
+                if all([t1,t2,t3,t4]):
+                    pass
+                # if all are out off the circle -> 0.0
+                elif not any([t1,t2,t3,t4]):
+                    self.A[ix][iy] = 0.0
+                # over-sample on a grid of Nsampl*Nsampl points and average
+                else:
+                    m = 0.0
+                    positions = np.arange(-(Nsampl-1)/(2*Nsampl), Nsampl/(2*Nsampl), 1/Nsampl)
+                    for dx in positions:
+                        for dy in positions:
+                            if pow(self.x(ix+dx)-x0,2)+pow(self.y(iy+dy)-y0,2)<pow(R,2):
+                                m += 1.0/(Nsampl*Nsampl)
+                    self.A[ix][iy] *= m        
+        
+    def CircularObscurance(self, R, x0=0.0, y0=0.0, Nsampl=4):
+        """
+        The radiation field is zeroed inside a circle with radius R about a point (x0,y0).
+        For all pixels which are not fully inside or outside the circle
+        oversampling is used to determine a fractional ratio of attenuation.
+        """
+        for ix in range(self.nx):
+            for iy in range(self.ny):
+                # check the 4 corner points of the pixel
+                t1 = pow(self.x(ix-0.5)-x0,2)+pow(self.y(iy-0.5)-y0,2)<pow(R,2)
+                t2 = pow(self.x(ix-0.5)-x0,2)+pow(self.y(iy+0.5)-y0,2)<pow(R,2)
+                t3 = pow(self.x(ix+0.5)-x0,2)+pow(self.y(iy-0.5)-y0,2)<pow(R,2)
+                t4 = pow(self.x(ix+0.5)-x0,2)+pow(self.y(iy+0.5)-y0,2)<pow(R,2)
+                # if all are in the circle -> 0.0
+                if all([t1,t2,t3,t4]):
+                    self.A[ix][iy] = 0.0
+                # if all are out off the circle -> unchanged
+                elif not any([t1,t2,t3,t4]):
+                    pass
+                # over-sample on a grid of Nsampl*Nsampl points and average
+                else:
+                    m = 0.0
+                    positions = np.arange(-(Nsampl-1)/(2*Nsampl), Nsampl/(2*Nsampl), 1/Nsampl)
+                    for dx in positions:
+                        for dy in positions:
+                            if pow(self.x(ix+dx)-x0,2)+pow(self.y(iy+dy)-y0,2)>pow(R,2):
+                                m += 1.0/(Nsampl*Nsampl)
+                    self.A[ix][iy] *= m        
         
     def TotalPower(self):
         """
