@@ -445,6 +445,26 @@ class SingleComponentBeam():
                                 m += 1.0/(Nsampl*Nsampl)
                     self.A[ix][iy] *= m        
         
+    def MirrorH(self):
+        """
+        Mirror the field horizonzally. The phase jump is ignored.
+        """
+        for ix in range(self.nx//2):
+            for iy in range(self.ny):
+                tmp = self.A[self.nx-ix-1][iy]
+                self.A[self.nx-ix-1][iy] = self.A[ix][iy]
+                self.A[ix][iy] = tmp
+        
+    def MirrorV(self):
+        """
+        Mirror the field horizonzally. The phase jump is ignored.
+        """
+        for ix in range(self.nx):
+            for iy in range(self.ny//2):
+                tmp = self.A[ix][self.ny-iy-1]
+                self.A[ix][self.ny-iy-1] = self.A[ix][iy]
+                self.A[ix][iy] = tmp
+        
     def ThinLens(self, f):
         """
         Apply the quadratic phase factors describing a thin lens with focal length f.
