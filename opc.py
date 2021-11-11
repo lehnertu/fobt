@@ -154,6 +154,18 @@ class SingleComponentBeam():
         self.A = np.zeros((nx,ny),dtype=np.cdouble)
     
     @classmethod
+    def PlaneWave(cls, f, nx, ny, dx, dy):
+        """
+        Create a plane wave with frequency f.
+        nx/ny are the horizontal/vertical field sizes (should be powers of 2 for FFT).
+        dx/dy are the corresponding pixel sizes.
+        """
+        beam = cls(f, nx, ny, dx, dy)
+        beam.A = np.ones((nx,ny),dtype=np.cdouble)
+        beam.Normalize()
+        return beam
+    
+    @classmethod
     def GaussianBeamWaist(cls, f, nx, ny, dx, dy, w0x, w0y):
         """
         Create a gaussian beam with width parameters w0x/w0y
@@ -432,6 +444,19 @@ class SingleComponentBeam():
                             if pow(self.x(ix+dx)-x0,2)+pow(self.y(iy+dy)-y0,2)>pow(R,2):
                                 m += 1.0/(Nsampl*Nsampl)
                     self.A[ix][iy] *= m        
+        
+    def ThinLens(self, f):
+        """
+        Apply the quadratic phase factors describing a thin lens with focal length f.
+        """
+        k = 2*pi*self.freq/scipy.constants.c
+        for ix in range(self.nx):
+            for iy in range(self.ny):
+                # radius from the axis
+                r2 = pow(self.x(ix),2) + pow(self.y(iy),2)
+                # path length deviation
+                dl = r2 / (2.0*f)
+                self.A[ix,iy] *= np.exp(1.0j*k*dl)        
         
     def TotalPower(self):
         """
