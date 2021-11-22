@@ -392,6 +392,7 @@ class SingleComponentBeam():
         The radiation field is zeroed outside a circle with radius R about a point (x0,y0).
         For all pixels which are not fully inside or outside the circle
         oversampling is used to determine a fractional ratio of attenuation.
+        The fractional attenuation is correct for the power, not the amplitude.
         """
         for ix in range(self.nx):
             for iy in range(self.ny):
@@ -414,13 +415,82 @@ class SingleComponentBeam():
                         for dy in positions:
                             if pow(self.x(ix+dx)-x0,2)+pow(self.y(iy+dy)-y0,2)<pow(R,2):
                                 m += 1.0/(Nsampl*Nsampl)
-                    self.A[ix][iy] *= m        
+                    self.A[ix][iy] *= sqrt(m)
         
+    def EllipticAperture(self, Rhor, Rvert, Nsampl=4):
+        """
+        The radiation field is zeroed outside an ellipse with half axis length Rhor, Rvert.
+        For all pixels which are not fully inside or outside the ellipse
+        oversampling is used to determine a fractional ratio of attenuation.
+        The fractional attenuation is correct for the power, not the amplitude.
+        """
+        rh2 = Rhor*Rhor
+        rv2 = Rvert*Rvert
+        for ix in range(self.nx):
+            for iy in range(self.ny):
+                # check the 4 corner points of the pixel
+                t1 = pow(self.x(ix-0.5),2)/rh2 + pow(self.y(iy-0.5),2)/rv2 < 1.0
+                t2 = pow(self.x(ix-0.5),2)/rh2 + pow(self.y(iy+0.5),2)/rv2 < 1.0
+                t3 = pow(self.x(ix+0.5),2)/rh2 + pow(self.y(iy-0.5),2)/rv2 < 1.0
+                t4 = pow(self.x(ix+0.5),2)/rh2 + pow(self.y(iy+0.5),2)/rv2 < 1.0
+                # if all are in the circle -> unchanged
+                if all([t1,t2,t3,t4]):
+                    pass
+                # if all are out off the circle -> 0.0
+                elif not any([t1,t2,t3,t4]):
+                    self.A[ix][iy] = 0.0
+                # over-sample on a grid of Nsampl*Nsampl points and average
+                else:
+                    m = 0.0
+                    positions = np.arange(-(Nsampl-1)/(2*Nsampl), Nsampl/(2*Nsampl), 1/Nsampl)
+                    for dx in positions:
+                        for dy in positions:
+                            if pow(self.x(ix+dx),2)/rh2 + pow(self.y(iy+dy),2)/rv2 < 1.0:
+                                m += 1.0/(Nsampl*Nsampl)
+                    self.A[ix][iy] *= sqrt(m)
+
+    def RectangularAperture(self, hor, vert):
+        """
+        The radiation field is zeroed outside an aperture of hor/vert width.
+        At the edges fractional attenuation is used if pixels are not fully
+        inside or outside the aperture.
+        The fractional attenuation is correct for the power, not the amplitude.
+        """
+        hh = hor/2.0
+        hv = vert/2.0
+        hdx = self.dx/2.0
+        hdy = self.dy/2.0
+        for ix in range(self.nx):
+            for iy in range(self.ny):
+                x = self.x(ix)
+                y = self.y(iy)
+                if x+hdx > hh:
+                    if x-hdx > hh:
+                        self.A[ix][iy] = 0.0
+                    else:
+                        self.A[ix][iy] *= sqrt((hh-x+hdx)/self.dx)
+                if x-hdx < -hh:
+                    if x+hdx < -hh:
+                        self.A[ix][iy] = 0.0
+                    else:
+                        self.A[ix][iy] *= sqrt((hh+x+hdx)/self.dx)
+                if y+hdy > hv:
+                    if y-hdy > hv:
+                        self.A[ix][iy] = 0.0
+                    else:
+                        self.A[ix][iy] *= sqrt((hv-y+hdy)/self.dy)
+                if y-hdy < -hv:
+                    if y+hdy < -hv:
+                        self.A[ix][iy] = 0.0
+                    else:
+                        self.A[ix][iy] *= sqrt((hv+y+hdy)/self.dy)
+
     def CircularObscurance(self, R, x0=0.0, y0=0.0, Nsampl=4):
         """
         The radiation field is zeroed inside a circle with radius R about a point (x0,y0).
         For all pixels which are not fully inside or outside the circle
         oversampling is used to determine a fractional ratio of attenuation.
+        The fractional attenuation is correct for the power, not the amplitude.
         """
         for ix in range(self.nx):
             for iy in range(self.ny):
@@ -443,7 +513,7 @@ class SingleComponentBeam():
                         for dy in positions:
                             if pow(self.x(ix+dx)-x0,2)+pow(self.y(iy+dy)-y0,2)>pow(R,2):
                                 m += 1.0/(Nsampl*Nsampl)
-                    self.A[ix][iy] *= m        
+                    self.A[ix][iy] *= sqrt(m)
         
     def MirrorH(self):
         """
